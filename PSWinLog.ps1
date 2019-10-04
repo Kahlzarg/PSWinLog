@@ -33,41 +33,42 @@ Function Check-File-Exits($path)
     }
 }
 
+#Find Service
 Function Get-IfService ($name)
 {
 try
   {
-  $result = Get-Service $name -ErrorAction Stop
-  Write-Host "Service $name Found"
-  return $true
+    $result = Get-Service $name -ErrorAction Stop
+    Write-Host "Service $name Found"
+    return $true
   }
 catch
   {
-  Write-Host "Service $name Not Found"
-  return $false
+    Write-Host "Service $name Not Found"
+    return $false
   }
 }
 
 #Service update user
 Function Set-Service-User ($serviceName, $UserName, $Password)
 {
-$svcD=gwmi win32_service -filter "name='$serviceName'" 
-$StopStatus = $svcD.StopService() 
-If ($StopStatus.ReturnValue -eq "0") # validating status - http://msdn.microsoft.com/en-us/library/aa393673(v=vs.85).aspx 
+  $svcD=gwmi win32_service -filter "name='$serviceName'" 
+  $StopStatus = $svcD.StopService() 
+  If ($StopStatus.ReturnValue -eq "0") # validating status - http://msdn.microsoft.com/en-us/library/aa393673(v=vs.85).aspx 
     {write-host "$serviceName Service Stopped Successfully"} 
-$ChangeStatus = $svcD.change($null,$null,$null,$null,$null,$null,$UserName,$Password,$null,$null,$null) 
-If ($ChangeStatus.ReturnValue -eq "0")  
+  $ChangeStatus = $svcD.change($null,$null,$null,$null,$null,$null,$UserName,$Password,$null,$null,$null) 
+  If ($ChangeStatus.ReturnValue -eq "0")  
     {write-host "$serviceName Sucessfully Changed User Name to $UserName"} 
-$StartStatus = $svcD.StartService() 
-If ($ChangeStatus.ReturnValue -eq "0")  
+  $StartStatus = $svcD.StartService() 
+  If ($ChangeStatus.ReturnValue -eq "0")  
     {write-host "$serviceName Service Started Successfully"} 
 }
 
 
-# Generate a Temporary - Pseudo Random Password 
+# Generate a Temporary 20 character- Pseudo Random Password, tha does not trigger escape characters. Fine for immutable instance. Otheriws use Managed Service Accounts (MSA's)
 Function Get-Pwd
 {
-    $pwd = -join(35..38 + 40..126|%{[char]$_}|Get-Random -C 13) + -join(48..57|%{[char]$_}|Get-Random -C 1)
+    $pwd = -join(35..38 + 40..126|%{[char]$_}|Get-Random -C 20) + -join(48..57|%{[char]$_}|Get-Random -C 1)
     Write-Host "Password:" $pwd 
     return $pwd
 }
@@ -103,29 +104,6 @@ Check-File-Exits("sysmon.exe")
 Check-File-Exits("sysmonconfig-export.xml")
 
 Check-File-Exits("nxlog-ce-2.10.2150.msi")
-
-<#
-$VarHT = @{
-AddSysMon = 1;
-AddIISLog = 1;
-AddIISFileAudit = 1;
-AddLoginAudit = 1;
-AddPowerShellAudit = 1;
-AddProcessAudit = 0;
-AddWinFWAudit = 1;
-AddWinDefenderAudit = 1;
-AddTimeChangeAudit = 1;
-AddTaskScheduleAudit = 1 ;
-AddRegistryPersistAudit = 1;
-AddRegistrySystemAudit = 1;
-AddRegistryForensicsAudit = 1;
-AddDomainControllerAudit = 1}
-
-ForEach ($v in $varHT.Keys)
-{
-   Write-Host($v.PadRight(25,' ') + ":" + $varHT[$v])
-}
-#>
 
 if (!(Get-IfService("sysmon")))
 {
@@ -166,8 +144,7 @@ Allow-EventLog $user "R"
 Write-Host "Install nxlog" 
 msiexec /i nxlog-ce-2.10.2150.msi /quiet /qn /norestart /log nslog-install.log
 
-##Run Service as svc-nxlog
-
+##Retry 3 times, added to avoid server setup race consition
 for ($i=0; $i -lt 3; $i++)
 {
     if (Get-IfService("nxlog") -eq $true)
@@ -177,6 +154,7 @@ for ($i=0; $i -lt 3; $i++)
     }
 }
 
+##Run Service as svc-nxlog
 Write-Host "Create service user"
 Set-Service-User nxlog svc_nxlog 
 
@@ -187,20 +165,21 @@ if (!(Test-Path -Path ${Env:ProgramFiles(x86)}\nxlog))
     Exit 1
 }
 
-
+##Add the Syslog IP to the nxlog.conf 
 ((Get-Content -path .\nxlog.conf.template -Raw) -replace '<%SYSLOGIP%>',$SysLogIP) | Set-Content -Path .\nxlog.conf
 copy-item nxlog.conf ${Env:ProgramFiles(x86)}\nxlog\conf\ 
 
 
-#PS WinEvt Policy/Reg
+#P#S WinEvt Policy/Reg
 Write-Host "Importing PSAuditing.reg"
 reg import /f PSAuditing.reg *>&1 | out-null
 
+##Only run this if IIS site is passed.
 if ($App -eq $null)
 {
-#Remove IIS Conf reference
-((Get-Content -path .\nxlog.conf -Raw) -replace 'include %CONFDIR%\\iis.conf','') | Set-Content -Path .\nxlog.conf
-copy-item nxlog.conf ${Env:ProgramFiles(x86)}\nxlog\conf\ 
+#Remove IIS Conf reference if null
+  ((Get-Content -path .\nxlog.conf -Raw) -replace 'include %CONFDIR%\\iis.conf','') | Set-Content -Path .\nxlog.conf
+  copy-item nxlog.conf ${Env:ProgramFiles(x86)}\nxlog\conf\ 
 }
 else
 {
@@ -239,6 +218,7 @@ else
 
     #Add Custom Log Feild Data
     $logsFields = Get-ItemProperty IIS:\Sites\$App -name logfile.customFields.collection
+    # Correlation-Id. Specific to me use case. Example of an extra header.
     if (($logsFields | where logfieldName -Contains "CorrelationId" ) -eq $null)
     {
       Write-Host "Adding "CorrelationId" Logging to $App"
@@ -248,6 +228,7 @@ else
     {
       Write-Host "CorrelationId Logging exists in $App"
     }
+    # IncapReqId allow Impoerva Incapsula reference ID captures in the IIS logs.
     if (($logsFields | where logfieldName -Contains "IncapReqId" ) -eq $null)
     {
       Write-Host "Adding "CorrelationId" Logging to $App"
@@ -259,17 +240,7 @@ else
     }
 }
 
-##Add nxlog audit.conf
 
-#File Audit Policy
-
-#Add File locations to Obj Audit
-
-#Registry location to Obj Audit
-
-##Add nxlog service.conf
-
-#Add Win FW evt
 
 #Add Task Scheduler History (Audit)
 #https://stackoverflow.com/questions/23227964/how-can-i-enable-all-tasks-history-in-powershell
