@@ -1,0 +1,101 @@
+Panic Soft
+#NoFreeOnExit TRUE
+
+define ROOT     C:\Program Files (x86)\nxlog
+define SYSLOGIP <%SYSLOGIP%>
+define CERTDIR  %ROOT%\cert
+define CONFDIR  %ROOT%\conf
+define LOGDIR   %ROOT%\data
+define LOGFILE  %LOGDIR%\nxlog.log
+LogFile %LOGFILE%
+
+include %CONFDIR%\iis.conf
+
+Moduledir %ROOT%\modules
+CacheDir  %ROOT%\data
+Pidfile   %ROOT%\data\nxlog.pid
+SpoolDir  %ROOT%\data
+
+<Extension _syslog>
+    Module      xm_syslog
+</Extension>
+
+<Extension _charconv>
+    Module      xm_charconv
+    AutodetectCharsets iso8859-2, utf-8, utf-16, utf-32
+</Extension>
+
+<Extension _exec>
+    Module      xm_exec
+</Extension>
+
+<Extension _fileop>
+    Module      xm_fileop
+
+    # Check the size of our log file hourly, rotate if larger than 5MB
+    <Schedule>
+        Every   1 hour
+        Exec    if (file_exists('%LOGFILE%') and \
+                   (file_size('%LOGFILE%') >= 5M)) \
+                    file_cycle('%LOGFILE%', 8);
+    </Schedule>
+
+    # Rotate our log file every week on Sunday at midnight
+    <Schedule>
+        When    @weekly
+        Exec    if file_exists('%LOGFILE%') file_cycle('%LOGFILE%', 8);
+    </Schedule>
+</Extension>
+
+<Input in>
+Module im_msvistalog
+    Query <QueryList>\
+        <Query Id="0">\
+            <Select Path="Security">*[System[(EventID=4798)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4799)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4780)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4756)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4625)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4624)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4634)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4648)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4624)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4624)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4624)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4732)]]</Select>\
+            <Select Path="Windows Powershell">*[System[(EventID=800)]]</Select>\
+            <Select Path="Microsoft-Windows-PowerShell/Operational">*[System[(EventID=4103)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4688)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4689)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4742)]]</Select>\
+            <Select Path="Security">*[System[(EventID=5137)]]</Select>\
+            <Select Path="Security">*[System[(EventID=5141)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4929)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4719)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4907)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4660)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4663)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4657)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4616)]]</Select>\
+            <Select Path="Security">*[System[(EventID=4657)]]</Select>\
+            <Select Path="Setup">*</Select>\
+            <Select Path="Security">*[System[(EventID=5025)]]</Select>\
+            <Select Path="Microsoft-Windows-Windows Firewall With Advanced Security/Firewall">*</Select>\
+            <Select Path="Microsoft-Windows-Sysmon/Operational">*</Select>\
+            <Select Path="Microsoft-Windows-TaskScheduler/Operational">*</Select>\
+        </Query>\
+    </QueryList>
+</Input>
+
+#            <Select Path="Microsoft-Windows-Windows Defender/Operational">*</Select>\
+
+<Output out>
+Module om_udp
+Host %SYSLOGIP%
+Port 514
+Exec to_syslog_snare();
+</Output>
+
+<Route 1>
+Path in => out
+</Route>

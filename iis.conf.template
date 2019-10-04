@@ -1,0 +1,75 @@
+#Define IIS Source
+
+define IIS_LOGS <%IIS_LOGS%>
+
+
+<Extension w3c_parser>
+    Module xm_csv
+    Fields $date $time $sip $csmethod $csuristem $csuriquery $sport $csusername $cip $csUserAgent $csstatus $CorrelationId $IncapReqId
+    FieldTypes string, string, string, string, string, string, string, string, string, string, string, string, string
+    Delimiter ' '
+</Extension>
+
+<Input IIS_Logs>
+	Module 		im_file
+	File 		"%IIS_LOGS%\\\*"
+	## Note the unusual three slash syntax - this allows recursive access to subfolders, porting all IIS logs.
+	## This can also use %IIS_LOGS%\W3SVC1\u* for the first IIS site, etc.
+	## See http://stackoverflow.com/questions/34401065/
+	SavePos TRUE
+    <Exec>
+        if $raw_event =~ /^#/ drop();
+        else
+        {
+            w3c_parser->parse_csv();
+            $EventTime = parsedate($date + "T" + $time + ".000Z");
+            #csv module based off Enteprise w3c module: https://nxlog.co/documentation/nxlog-user-guide/qradar.html#qradar-iis
+            if file_name() =~ /^.*\\(.*)$/
+                $FileName = $1;
+            if $csuriquery == undef
+                $csuriquery = "-";
+            if $csstatus == undef
+                $csstatus = "-";
+            if $CorrelationId == undef
+                $CorrelationId = "-";
+            if $IncapReqId == undef
+                $IncapReqId = "-";
+            $Message = "AgentDevice=MSIIS" +
+            "\tAgentLogFile=" + $FileName +
+            "\tPluginVersion=7.2.9.72" +
+            "\tAgentLogFormat=W3C" +
+            "\tAgentLogProtocol=W3C" +
+            "\tdate=" + $date +
+            "\ttime=" + $time +
+            "\ts-ip=" + $sip +
+            "\tcs-method=" + $csmethod +
+            "\tcs-uri-stem=" + $csuristem +
+            "\tcs-uri-query=" + $csuriquery +
+            "\ts-port=" + $sport +
+            "\tcs-username=" + $csusername +
+            "\tc-ip=" + $cip +
+            "\tcs(User-Agent)=" + $csUserAgent +
+            "\tsc-status=" + $csstatus +
+            "\ttime-taken=-" +
+            "\tCorrelationId=" + $CorrelationId +
+            "\tIncapReqId=" + $IncapReqId;
+        $EventTime = parsedate($date + " " + $time);
+        delete($SourceName);
+        }
+    </Exec>
+</Input>
+ 
+#Define Output
+<Output IIS_Syslog>
+	Module om_tcp
+	#Module om_udp #TCP Preferred for all PCI workloads.
+	Host %SYSLOGIP%
+	Port 514
+	Exec to_syslog_bsd();
+	#Exec to_syslog_ieft();#Adds Metadata. Not Supported by QRadar.
+</Output>
+ 
+#Make something happen
+<Route IIS>
+  Path IIS_Logs => IIS_Syslog
+</Route>
